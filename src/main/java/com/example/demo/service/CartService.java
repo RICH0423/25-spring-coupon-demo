@@ -35,7 +35,7 @@ public class CartService {
     /**
      * 根據輸入的 {@link ShoppingCartInput} 計算購物車的總價和折扣。
      * <p>
-     * 此方法會將所有提供的有效固定金額優惠券的折扣疊加。
+     * 此方法僅允許擇一使用優惠券。若收到多個代碼，只套用第一個有效代碼。
      *
      * @param cartInput 包含購物車項目、數量和優惠券代碼列表的輸入物件。
      * @return {@link CalculationResultDto} 包含原始總價、折扣後總價、實際折扣金額以及所有套用的優惠券列表。
@@ -46,8 +46,13 @@ public class CartService {
         List<Coupon> appliedCoupons = new ArrayList<>();
         Integer totalDiscountAmountFromCoupons = applyCoupons(cartInput.couponCodes(), appliedCoupons);
 
-        // 計算折扣後總價
+        // 計算折扣後總價，並確保不為負數
         Integer finalPrice = rawTotalPrice - totalDiscountAmountFromCoupons;
+        if (finalPrice < 0) {
+            log.warn("折扣後總價計算結果小於 0，將其校正為 0。原始總價:{}, 折扣總額:{}",
+                    rawTotalPrice, totalDiscountAmountFromCoupons);
+            finalPrice = 0;
+        }
 
         Integer effectiveTotalDiscount = rawTotalPrice - finalPrice;
 
@@ -87,22 +92,28 @@ public class CartService {
      * @return 從所有套用的優惠券中獲得的總折扣金額。
      */
     private Integer applyCoupons(List<String> couponCodes, List<Coupon> appliedCoupons) {
-        Integer currentTotalDiscount = 0;
-        if (couponCodes != null && !couponCodes.isEmpty()) {
-            for (String couponCode : couponCodes) {
-                if (couponCode != null && !couponCode.trim().isEmpty()) {
-                    Optional<Coupon> optionalCoupon = couponRepository.findByCode(couponCode);
-                    if (optionalCoupon.isPresent()) {
-                        Coupon coupon = optionalCoupon.get();
-                        appliedCoupons.add(coupon);
-                        currentTotalDiscount += coupon.getDiscountAmount();
-                        log.debug("套用優惠券 '{}', 折抵金額: {}", coupon.getDescription(), coupon.getDiscountAmount());
-                    } else {
-                        log.warn("計算時找不到優惠券代碼: {}。此券將不被套用。", couponCode);
-                    }
-                }
-            }
+        if (couponCodes == null || couponCodes.isEmpty()) {
+            return 0;
         }
-        return currentTotalDiscount;
+
+        if (couponCodes.size() > 1) {
+            log.warn("收到多於一張優惠券代碼，僅套用第一張: {}", couponCodes);
+        }
+
+        String couponCode = couponCodes.get(0);
+        if (couponCode == null || couponCode.trim().isEmpty()) {
+            return 0;
+        }
+
+        Optional<Coupon> optionalCoupon = couponRepository.findByCode(couponCode);
+        if (optionalCoupon.isPresent()) {
+            Coupon coupon = optionalCoupon.get();
+            appliedCoupons.add(coupon);
+            log.debug("套用優惠券 '{}', 折抵金額: {}", coupon.getDescription(), coupon.getDiscountAmount());
+            return coupon.getDiscountAmount();
+        } else {
+            log.warn("計算時找不到優惠券代碼: {}。此券將不被套用。", couponCode);
+            return 0;
+        }
     }
 }
